@@ -17,6 +17,7 @@ class PathPlanner
         vector<Point2i> path;
         const uchar DRIVABLE = 255;
         const uchar DRIVABLE_THRESH = 250;
+        float obst_avoid_weight = 10.0;
 
     public:
 
@@ -36,6 +37,11 @@ class PathPlanner
         void set_start_point(int x, int y)
         {
             start = Point2i(x, y);
+        }
+
+        void set_obst_avoid_weight(float alpha)
+        {
+            obst_avoid_weight = alpha;
         }
 
         void show_map()
@@ -61,12 +67,12 @@ class PathPlanner
             Point2i goal(start.x, start.y+2);
 
             // prepare maps
-            Mat search_map, dist_map; 
+            Mat search_map, obst_dist_map; 
             threshold(map, search_map, DRIVABLE_THRESH, DRIVABLE, THRESH_BINARY);
-            //distanceTransform(search_map, dist_map, DIST_L2, 5);
+            distanceTransform(search_map, obst_dist_map, DIST_L2, 5);
 
             // block going backwards
-            float inf = numeric_limits<float>::infinity();
+            const float inf = numeric_limits<float>::infinity();
             int y = start.y + 1;
             // check left
             for(int x = start.x; x >= 0; x--) {
@@ -96,6 +102,8 @@ class PathPlanner
             vector<node_t> candidates;
 
             // Use flood fill variant if track only small portion of map
+            // or even use constrcutive variant where nodes are pushed 
+            // on the go during search
             for(int x = 0; x < search_map.rows; x++) {
                 for(int y = 0; y < search_map.cols; y++) {
 
@@ -147,6 +155,8 @@ class PathPlanner
                     // no neighbor
                     else
                         continue;
+                    // heuristic weight to avoid obstacles
+                    alt_dist += obst_avoid_weight/obst_dist_map.at<float>(c.coord);
                     // update with alternative route
                     if(alt_dist < c.dist) {
                         c.dist = alt_dist;
