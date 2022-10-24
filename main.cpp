@@ -1,4 +1,5 @@
 #include <math.h>
+#include <unistd.h>
 
 #include <iostream>
 #include <vector>
@@ -17,7 +18,7 @@ class PathPlanner
         vector<Point2i> path;
         const uchar DRIVABLE = 255;
         const uchar DRIVABLE_THRESH = 250;
-        float obst_avoid_weight = 10.0;
+        float obst_avoid_weight = 1.0;
 
     public:
 
@@ -98,7 +99,6 @@ class PathPlanner
                 int pred;
                 bool erased;
             } node_t;
-            // TODO use priority queue instead
             vector<node_t> candidates;
 
             // Use flood fill variant if track only small portion of map
@@ -189,8 +189,25 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    PathPlanner planner(argv[1]);
+    char *fname = argv[1];
+
+    int opt;
+    float obst_avoid_weight = 0.0;
+    while((opt = getopt(argc, argv, "a:")) != -1) {
+        switch(opt) {
+            case 'a':
+                obst_avoid_weight = stof(optarg);
+                break;
+            
+            case '?':
+                cerr << "Usage: " << argv[0] << " path/to/map [-a obst-avoid-weight]" << endl;
+                return -1;
+        }
+    }
+
+    PathPlanner planner(fname);
     planner.set_start_point(220, 220); // TODO read from yaml file
+    planner.set_obst_avoid_weight(obst_avoid_weight);
     planner.find_path();
     planner.show_map();
     
