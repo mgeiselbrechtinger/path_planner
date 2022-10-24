@@ -20,6 +20,30 @@ class PathPlanner
         const uchar DRIVABLE_THRESH = 250;
         float obst_avoid_weight = 1.0;
 
+        typedef struct {
+            Point2i coord;
+            float dist;
+            int pred;
+            bool erased; // lazy deletion
+        } node_t;
+
+        static bool node_cmp(const node_t &a, const node_t &b)
+        {
+            if(a.erased)
+                return false;
+            else
+                return a.dist < b.dist;
+        }
+
+        static bool never_seen(const vector<node_t> &vec, const Point2i &pt)
+        {
+            for(auto &e : vec) {
+                if(e.coord == pt)
+                    return false;
+            }
+            return true;
+        }
+
     public:
 
         PathPlanner();
@@ -93,84 +117,92 @@ class PathPlanner
             // plain Dijkstra
             
             // initialization
-            typedef struct {
-                Point2i coord;
-                float dist;
-                int pred;
-                bool erased;
-            } node_t;
-            vector<node_t> candidates;
-
-            // Use flood fill variant if track only small portion of map
-            // or even use constrcutive variant where nodes are pushed 
-            // on the go during search
-            for(int x = 0; x < search_map.rows; x++) {
-                for(int y = 0; y < search_map.cols; y++) {
-
-                    if(search_map.at<uchar>(y, x) == DRIVABLE) {
-                        node_t c = {Point2i(x, y), inf, -1, false};
-
-                        if(c.coord == start) 
-                            c.dist = 0;
-
-                        candidates.push_back(c);
-                    }
-                }
-            }
+            priority_queue<node_t, vector<node_t>, decltype(&node_cmp)> candidates(&node_cmp);
+            vector<node_t> visited;
 
             // path search
+            candidates.push({start, 0, -1, false});
             int cur_idx;
             while(!candidates.empty()) {
+                node_t cur_c;
                 // find candidate with min dist
-                float min_dist = inf;
-                for(size_t i = 0; i < candidates.size(); i++) {
-                    node_t &c = candidates[i];
-                    if(c.erased) continue;
-                    if(c.dist < min_dist) {
-                        min_dist = c.dist;
-                        cur_idx = i;
-                    }
-                }
+                do {
+                    cur_c = candidates.top();
+                    candidates.pop();
+                } while(cur_c.erased && !candidates.empty());
+                cur_idx = visited.size();
+                visited.push_back(cur_c);
 
-                node_t &cur_c = candidates[cur_idx];
-                cur_c.erased = true;
-
+                cout << cur_c.coord << endl;
                 if(cur_c.coord == goal)
                     break;
 
                 // iterate over neighbors
-                for(size_t i = 0; i < candidates.size(); i++) {
-                    node_t &c = candidates[i];
-                    if(c.erased) 
-                        continue;
-                    float alt_dist = cur_c.dist;
-                    float dx = abs(c.coord.x - cur_c.coord.x);
-                    float dy = abs(c.coord.y - cur_c.coord.y);
-                    // diagonal neighbor
-                    if(dx == 1 && dy == 1)
-                        alt_dist += 1.414;
-                    // direct neighbor
-                    else if(dx <= 1 && dy <= 1)
-                        alt_dist += 1;
-                    // no neighbor
-                    else
-                        continue;
-                    // heuristic weight to avoid obstacles
-                    alt_dist += obst_avoid_weight/obst_dist_map.at<float>(c.coord);
-                    // update with alternative route
-                    if(alt_dist < c.dist) {
-                        c.dist = alt_dist;
-                        c.pred = cur_idx;
-                    }
+                float alt_dist = cur_c.dist;
+                // up
+                Point2i pt_u(cur_c.coord.x, cur_c.coord.y - 1);
+                if(pt_u.y >= 0 
+                        && search_map.at<uchar>(pt_u) == DRIVABLE
+                        && never_seen(visited, pt_u)) {
+                    candidates.push({pt_u, alt_dist + 1, cur_idx, false});
+                }
+                // down
+                Point2i pt_d(cur_c.coord.x, cur_c.coord.y + 1);
+                if(pt_d.y < search_map.cols 
+                        && search_map.at<uchar>(pt_d) == DRIVABLE
+                        && never_seen(visited, pt_d)) {
+                    candidates.push({pt_d, alt_dist + 1, cur_idx, false});
+                }
+                // left
+                Point2i pt_l(cur_c.coord.x - 1, cur_c.coord.y);
+                if(pt_l.x >= 0 
+                        && search_map.at<uchar>(pt_l) == DRIVABLE
+                        && never_seen(visited, pt_l)) {
+                    candidates.push({pt_l, alt_dist + 1, cur_idx, false});
+                }
+                // right
+                Point2i pt_r(cur_c.coord.x + 1, cur_c.coord.y);
+                if(pt_r.x < search_map.rows 
+                        && search_map.at<uchar>(pt_r) == DRIVABLE
+                        && never_seen(visited, pt_r)) {
+                    candidates.push({pt_r, alt_dist + 1, cur_idx, false});
+                }
+                // left-up
+                Point2i pt_lu(cur_c.coord.x - 1, cur_c.coord.y - 1);
+                if(pt_lu.x >= 0 && pt_lu.y >= 0 
+                        && search_map.at<uchar>(pt_lu) == DRIVABLE
+                        && never_seen(visited, pt_lu)) {
+                    candidates.push({pt_lu, alt_dist + 1.414, cur_idx, false});
+                }
+                // right-up
+                Point2i pt_ru(cur_c.coord.x + 1, cur_c.coord.y - 1);
+                if(pt_ru.x < search_map.rows && pt_ru.y >= 0 
+                        && search_map.at<uchar>(pt_ru) == DRIVABLE
+                        && never_seen(visited, pt_ru)) {
+                    candidates.push({pt_ru, alt_dist + 1.414, cur_idx, false});
+                }
+                // left-down
+                Point2i pt_ld(cur_c.coord.x - 1, cur_c.coord.y + 1);
+                if(pt_ld.x >= 0 && pt_ld.y < search_map.cols 
+                        && search_map.at<uchar>(pt_ld) == DRIVABLE
+                        && never_seen(visited, pt_ld)) {
+                    candidates.push({pt_ld, alt_dist + 1.414, cur_idx, false});
+                }
+                // right-down
+                Point2i pt_rd(cur_c.coord.x + 1, cur_c.coord.y + 1);
+                if(pt_rd.x < search_map.rows && pt_rd.y < search_map.cols 
+                        && search_map.at<uchar>(pt_rd) == DRIVABLE
+                        && never_seen(visited, pt_rd)) {
+                    candidates.push({pt_rd, alt_dist + 1.414, cur_idx, false});
                 }
             }
 
             // construct reversed path: goal -> start
             vector<Point2i> rpath;
-            node_t &c = candidates[cur_idx];
+            node_t &c = visited[cur_idx];
             rpath.push_back(c.coord);
             while(c.pred != -1) {
-                c = candidates[c.pred];
+                c = visited[c.pred];
                 rpath.push_back(c.coord);
             }
 
