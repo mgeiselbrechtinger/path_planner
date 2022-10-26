@@ -1,6 +1,6 @@
-#include <math.h>
 #include <unistd.h>
 
+#include <cmath>
 #include <iostream>
 #include <vector>
 #include <limits>
@@ -14,10 +14,21 @@ class PathPlanner
 {
     private:
         Mat map;
+        bool map_available = false;
+
         Point2i start;
+        bool start_point_available;
+
         vector<Point2i> path;
-        const uchar DRIVABLE = 255;
-        const uchar DRIVABLE_THRESH = 250;
+        bool path_available;
+
+        Mat map_driveable;
+        enum driveable_t {
+            not_driveable=0, 
+            driveable=255, 
+            driveable_threshold=250
+        };
+
         float obst_avoid_weight = 1.0;
 
     public:
@@ -33,11 +44,14 @@ class PathPlanner
         {
             map = imread(fname, IMREAD_GRAYSCALE);
             transpose(map, map);
+            threshold(map, map_driveable, driveable_threshold, driveable, THRESH_BINARY);
+            map_available = true;
         }
 
         void set_start_point(int x, int y)
         {
             start = Point2i(x, y);
+            start_point_available = true;
         }
 
         void set_obst_avoid_weight(float alpha)
@@ -45,60 +59,81 @@ class PathPlanner
             obst_avoid_weight = alpha;
         }
 
-        void show_map()
+        void show_map(bool full=true)
         {
-            Mat disp_map = map.clone();
+            if(!map_available) {
+                cerr << "No map loaded to print" << endl;
+                return;
+            }
+            
+            Mat disp_map;
+            if(full) {
+                disp_map = map.clone();
 
-            // draw path
-            for(auto p : path)
-                disp_map.at<uchar>(p.y, p.x) = 100;
+                // draw path
+                if(path_available) {
+                    for(auto p : path)
+                        disp_map.at<uchar>(p.y, p.x) = 100;
+                }
 
-            // draw car
-            rectangle(disp_map,
-                    Point(start.x-2, start.y), 
-                    Point(start.x+2, start.y+8), 
-                    0, FILLED);
+                // draw car
+                if(start_point_available) {
+                    rectangle(disp_map,
+                            Point(start.x-2, start.y), 
+                            Point(start.x+2, start.y+8), 
+                            0, FILLED);
+                }
+
+            } else {
+                disp_map = map_driveable;
+
+            }
 
             imshow("Map", disp_map);
             waitKey(0);
+            destroyWindow("Map");
         }
 
         bool find_path()
         {
-            Point2i goal(start.x, start.y+2);
+            if(!map_available || !start_point_available)
+                return false;
+
+            constexpr float inf = numeric_limits<float>::infinity();
+            constexpr float sqrt2 = sqrt(2);
 
             // prepare maps
             Mat search_map, obst_dist_map; 
-            threshold(map, search_map, DRIVABLE_THRESH, DRIVABLE, THRESH_BINARY);
+            search_map = map_driveable.clone();
             distanceTransform(search_map, obst_dist_map, DIST_L2, 5);
 
+            Point2i goal(start.x, start.y+2);
             // block going backwards
-            const float inf = numeric_limits<float>::infinity();
             int y = start.y + 1;
             // check left
             for(int x = start.x; x >= 0; x--) {
-                if(search_map.at<uchar>(y, x) == 0) 
+                if(search_map.at<uchar>(y, x) == not_driveable) 
                     break;
                 else
-                    search_map.at<uchar>(y, x) = 0;
+                    search_map.at<uchar>(y, x) = not_driveable;
             }
             // check right
             for(int x = start.x + 1; x < search_map.cols; x++) {
-                if(search_map.at<uchar>(y, x) == 0) 
+                if(search_map.at<uchar>(y, x) == not_driveable) 
                     break;
                 else
-                    search_map.at<uchar>(y, x) = 0;
+                    search_map.at<uchar>(y, x) = not_driveable;
             }
 
             // plain Dijkstra
             
             // initialization
-            typedef struct {
+            struct node_t {
                 Point2i coord;
                 float dist;
-                int pred;
-                bool erased;
-            } node_t;
+                int pred_idx;
+                bool erased; // lazy deletion
+            };
             vector<node_t> candidates;
 
             // Use flood fill variant if track only small portion of map
@@ -107,8 +142,8 @@ class PathPlanner
             for(int x = 0; x < search_map.rows; x++) {
                 for(int y = 0; y < search_map.cols; y++) {
 
-                    if(search_map.at<uchar>(y, x) == DRIVABLE) {
-                        node_t c = {Point2i(x, y), inf, -1, false};
+                    if(search_map.at<uchar>(y, x) == driveable) {
+                        node_t c {Point2i(x, y), inf, -1, false};
 
                         if(c.coord == start) 
                             c.dist = 0;
@@ -124,8 +159,10 @@ class PathPlanner
                 // find candidate with min dist
                 float min_dist = inf;
                 for(size_t i = 0; i < candidates.size(); i++) {
-                    node_t &c = candidates[i];
+                    const node_t &c = candidates[i];
+
                     if(c.erased) continue;
+
                     if(c.dist < min_dist) {
                         min_dist = c.dist;
                         cur_idx = i;
@@ -141,14 +178,15 @@ class PathPlanner
                 // iterate over neighbors
                 for(size_t i = 0; i < candidates.size(); i++) {
                     node_t &c = candidates[i];
-                    if(c.erased) 
-                        continue;
+
+                    if(c.erased) continue;
+
                     float alt_dist = cur_c.dist;
                     float dx = abs(c.coord.x - cur_c.coord.x);
                     float dy = abs(c.coord.y - cur_c.coord.y);
                     // diagonal neighbor
                     if(dx == 1 && dy == 1)
-                        alt_dist += 1.414;
+                        alt_dist += sqrt2;
                     // direct neighbor
                     else if(dx <= 1 && dy <= 1)
                         alt_dist += 1;
@@ -160,7 +198,7 @@ class PathPlanner
                     // update with alternative route
                     if(alt_dist < c.dist) {
                         c.dist = alt_dist;
-                        c.pred = cur_idx;
+                        c.pred_idx = cur_idx;
                     }
                 }
             }
@@ -169,13 +207,14 @@ class PathPlanner
             vector<Point2i> rpath;
             node_t &c = candidates[cur_idx];
             rpath.push_back(c.coord);
-            while(c.pred != -1) {
-                c = candidates[c.pred];
+            while(c.pred_idx != -1) {
+                c = candidates[c.pred_idx];
                 rpath.push_back(c.coord);
             }
 
             // copy and reverse path: start -> goal
             path = vector<Point2i>(rpath.rbegin(), rpath.rend());
+            path_available = true;
             
             return true;
         }
@@ -206,6 +245,7 @@ int main(int argc, char *argv[])
     }
 
     PathPlanner planner(fname);
+    planner.show_map(true);
     planner.set_start_point(220, 220); // TODO read from yaml file
     planner.set_obst_avoid_weight(obst_avoid_weight);
     planner.find_path();
