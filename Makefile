@@ -10,5 +10,8 @@ $(BUILD_DIR)/$(APP): $(BUILD_DIR)/$(SRC).o
 $(BUILD_DIR)/$(SRC).o: $(SRC).cpp
 	gcc -c -Wall -I/usr/include/opencv4 -o $@ $<
 
+run: $(BUILD_DIR)/$(APP)
+	$< data/porto.pgm
+
 clean:
 	rm $(BUILD_DIR)/*

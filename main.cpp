@@ -35,12 +35,12 @@ class PathPlanner
 
         PathPlanner();
 
-        PathPlanner(char *fname)
+        PathPlanner(const string &fname)
         {
             load_map(fname);
         }
         
-        void load_map(char *fname)
+        void load_map(const string &fname)
         {
             map = imread(fname, IMREAD_GRAYSCALE);
             transpose(map, map);
@@ -125,9 +125,8 @@ class PathPlanner
                     search_map.at<uchar>(y, x) = not_driveable;
             }
 
-            // plain Dijkstra
+            // Dijkstra with wall-distance heuristic
             
-            // initialization
             struct node_t {
                 Point2i coord;
                 float dist;
@@ -153,7 +152,7 @@ class PathPlanner
                 }
             }
 
-            // path search
+            // Path search
             int cur_idx;
             while(!candidates.empty()) {
                 // find candidate with min dist
@@ -213,6 +212,7 @@ class PathPlanner
             }
 
             // copy and reverse path: start -> goal
+            path.clear();
             path = vector<Point2i>(rpath.rbegin(), rpath.rend());
             path_available = true;
             
@@ -245,7 +245,6 @@ int main(int argc, char *argv[])
     }
 
     PathPlanner planner(fname);
-    planner.show_map(true);
     planner.set_start_point(220, 220); // TODO read from yaml file
     planner.set_obst_avoid_weight(obst_avoid_weight);
     planner.find_path();
